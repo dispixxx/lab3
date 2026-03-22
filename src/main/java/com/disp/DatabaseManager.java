@@ -38,8 +38,7 @@ public class DatabaseManager {
                 port INTEGER NOT NULL,
                 first_connected TIMESTAMP NOT NULL,
                 last_seen TIMESTAMP NOT NULL,
-                is_active BOOLEAN DEFAULT TRUE,
-                total_connections INTEGER DEFAULT 1
+                is_active BOOLEAN DEFAULT TRUE
             )
         """;
 
@@ -51,20 +50,19 @@ public class DatabaseManager {
 
     // Сохранение или обновление информации о пире
     public void saveOrUpdatePeer(String name, String ip, int port) {
-        String checkSql = "SELECT id, first_connected, total_connections FROM peers WHERE name = ?";
+        String checkSql = "SELECT id, first_connected FROM peers WHERE name = ?";
         String updateSql = """
             UPDATE peers SET 
                 ip = CAST(? AS VARCHAR), 
                 port = CAST(? AS INTEGER), 
                 last_seen = CAST(? AS TIMESTAMP), 
-                is_active = CAST(? AS BOOLEAN),
-                total_connections = CAST(? AS INTEGER)
+                is_active = CAST(? AS BOOLEAN)
             WHERE name = CAST(? AS VARCHAR)
         """;
         String insertSql = """
-            INSERT INTO peers (name, ip, port, first_connected, last_seen, is_active, total_connections)
+            INSERT INTO peers (name, ip, port, first_connected, last_seen, is_active)
             VALUES (CAST(? AS VARCHAR), CAST(? AS VARCHAR), CAST(? AS INTEGER), 
-                    CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP), CAST(? AS BOOLEAN), CAST(? AS INTEGER))
+                    CAST(? AS TIMESTAMP), CAST(? AS TIMESTAMP), CAST(? AS BOOLEAN))
         """;
 
         try {
@@ -77,15 +75,13 @@ public class DatabaseManager {
 
                 if (rs.next()) {
                     // Пир существует - обновляем
-                    int totalConns = rs.getInt("total_connections") + 1;
 
                     try (PreparedStatement updateStmt = connection.prepareStatement(updateSql)) {
                         updateStmt.setString(1, ip);
                         updateStmt.setInt(2, port);
                         updateStmt.setTimestamp(3, now);
                         updateStmt.setBoolean(4, true);
-                        updateStmt.setInt(5, totalConns);
-                        updateStmt.setString(6, name);
+                        updateStmt.setString(5, name);
                         updateStmt.executeUpdate();
 
                         System.out.println("✓ Обновлен пир в БД: " + name);
@@ -99,7 +95,6 @@ public class DatabaseManager {
                         insertStmt.setTimestamp(4, now);
                         insertStmt.setTimestamp(5, now);
                         insertStmt.setBoolean(6, true);
-                        insertStmt.setInt(7, 1);
                         insertStmt.executeUpdate();
 
                         System.out.println("✓ Добавлен новый пир в БД: " + name);
@@ -166,8 +161,8 @@ public class DatabaseManager {
     // Получить статистику пира
     public void printPeerStats(String name) {
         String sql = """
-            SELECT name, ip, port, first_connected, last_seen, 
-                   is_active, total_connections
+            SELECT name, ip, port, first_connected, last_seen,
+                   is_active
             FROM peers 
             WHERE name = CAST(? AS VARCHAR)
         """;
@@ -183,7 +178,6 @@ public class DatabaseManager {
                 System.out.println("Первое подключение: " + rs.getTimestamp("first_connected"));
                 System.out.println("Последнее появление: " + rs.getTimestamp("last_seen"));
                 System.out.println("Активен: " + (rs.getBoolean("is_active") ? "Да" : "Нет"));
-                System.out.println("Всего подключений: " + rs.getInt("total_connections"));
                 System.out.println("================================");
             } else {
                 System.out.println("Пир " + name + " не найден в БД");
@@ -194,7 +188,7 @@ public class DatabaseManager {
         }
     }
 
-    // Очистить неактивных пиров (пиры, не обновлявшие статус более 5 минут)
+    // Очистить неактивных пиров (пиры, не обновлявшие статус более 5 минут. Принудительное отключение)
     public void cleanupInactivePeers() {
         String sql = """
             UPDATE peers 

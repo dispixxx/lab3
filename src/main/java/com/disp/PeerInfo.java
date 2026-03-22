@@ -13,7 +13,6 @@ public class PeerInfo {
         this.ip = ip;
         this.port = port;
         this.lastSeen = System.currentTimeMillis();
-        this.isActive = true;
     }
 
     // Конструктор для БД
@@ -44,6 +43,6 @@ public class PeerInfo {
 
     @Override
     public String toString() {
-        return name + " (" + ip + ":" + port + ")" + (isActive ? " [активен]" : " [неактивен]");
+        return name + " (" + ip + ":" + port + ")";
     }
 }

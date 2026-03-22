@@ -1,6 +1,9 @@
 package com.disp;
 
 import java.net.*;
+import java.nio.charset.StandardCharsets;
+import java.sql.Timestamp;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -13,9 +16,6 @@ public class SignalServer {
         // Инициализируем БД
         dbManager = new DatabaseManager();
 
-        // Загружаем активных пиров из БД при старте
-//        loadActivePeersFromDB();
-
         try (DatagramSocket socket = new DatagramSocket(PORT)) {
             System.out.println("=== Сигнальный сервер запущен на порту " + PORT + " ===");
 
@@ -25,6 +25,7 @@ public class SignalServer {
                     try {
                         Thread.sleep(30000); // Проверка каждые 30 секунд
                         long now = System.currentTimeMillis();
+                        Timestamp timestamp = new Timestamp(now);
 
                         // Очищаем неактивных пиров из памяти
                         List<String> inactivePeers = new ArrayList<>();
@@ -45,7 +46,8 @@ public class SignalServer {
 
                         // Очищаем старые записи в БД
                         dbManager.cleanupInactivePeers();
-
+                        Date date = new Date(timestamp.getTime());
+                        System.out.println(date);
                         System.out.println("Активных пиров в памяти: " + activePeers.size());
                         System.out.println("Активных пиров в БД: " + dbManager.getActivePeers().size());
 
@@ -61,7 +63,7 @@ public class SignalServer {
                 DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
                 socket.receive(packet);
 
-                String message = new String(packet.getData(), 0, packet.getLength(), "UTF-8");
+                String message = new String(packet.getData(), 0, packet.getLength(), StandardCharsets.UTF_8);
                 String[] parts = message.split("\\|");
                 String response = "";
                 String clientInfo = packet.getAddress().getHostAddress() + ":" + packet.getPort();
@@ -119,11 +121,6 @@ public class SignalServer {
                     response = sb.toString();
                     System.out.println("📋 Отправлен список пиров из БД (" + dbPeers.size() + " активных)");
                 }
-                else if (parts[0].equals("GET_STATS") && parts.length >= 2) {
-                    String name = parts[1];
-                    dbManager.printPeerStats(name);
-                    response = "STATS|REQUESTED";
-                }
                 else if (parts[0].equals("LOGOUT") && parts.length >= 2) {
                     String name = parts[1];
                     PeerInfo peer = activePeers.remove(name);
@@ -152,15 +149,6 @@ public class SignalServer {
             if (dbManager != null) {
                 dbManager.close();
             }
-        }
-    }
-
-    private static void loadActivePeersFromDB() {
-        List<PeerInfo> peers = dbManager.getActivePeers();
-        for (PeerInfo peer : peers) {
-            // Не загружаем в activePeers, так как они могут быть не в сети
-            System.out.println("📂 Загружен из БД: " + peer.getName() +
-                    " (последнее подключение: " + new Date(peer.getLastSeen()) + ")");
         }
     }
 }

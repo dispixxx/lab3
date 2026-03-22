@@ -2,6 +2,7 @@ package com.disp;
 
 import java.net.*;
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -38,18 +39,22 @@ public class SimpleP2PChat {
     // =========================================================================
     // CALLBACK ИНТЕРФЕЙСЫ ДЛЯ GUI
     // =========================================================================
+    @FunctionalInterface
     public interface MessageCallback {
         void onMessageReceived(String sender, String message);
     }
 
+    @FunctionalInterface
     public interface StatusCallback {
         void onStatusChanged(boolean connected, String partnerName);
     }
 
+    @FunctionalInterface
     public interface PeersCallback {
         void onPeersUpdated(List<PeerInfo> peers);
     }
 
+    @FunctionalInterface
     public interface FileProgressCallback {
         void onFileProgress(String fileName, int progress, boolean isSending);
     }
@@ -112,7 +117,6 @@ public class SimpleP2PChat {
     // =========================================================================
     private void registerWithSignalServer(int chatPort) {
         try {
-            String localIP = InetAddress.getLocalHost().getHostAddress();
             String registerMsg = "REGISTER|" + userName + "|" + chatPort;
             String response = sendToSignalServer(registerMsg);
 
@@ -133,8 +137,7 @@ public class SimpleP2PChat {
                 try {
                     Thread.sleep(30000);
                     sendToSignalServer("HEARTBEAT|" + userName);
-                } catch (Exception e) {
-                    // Игнорируем ошибки heartbeat
+                } catch (Exception ignored) {
                 }
             }
         }).start();
@@ -215,6 +218,12 @@ public class SimpleP2PChat {
     // =========================================================================
     public void connectToPeer(PeerInfo peer) {
         try {
+            // Сначала отключаемся от текущего собеседника, если есть
+            if (partnerConnected) {
+                disconnectFromPeer();
+                Thread.sleep(500); // Даем время на отключение
+            }
+
             partnerAddress = InetAddress.getByName(peer.getIp());
             partnerPort = peer.getPort();
             partnerName = peer.getName();
@@ -233,11 +242,11 @@ public class SimpleP2PChat {
             }
         } catch (Exception e) {
             System.out.println("✗ Ошибка подключения к пиру: " + e.getMessage());
-            partnerConnected = false;
-            partnerName = null;
+            clearPartnerConnection();
         }
     }
 
+    //Подлючиться к пиру из /list
     public void connectToPeer(int index) {
         if (index >= 0 && index < availablePeers.size()) {
             connectToPeer(availablePeers.get(index));
@@ -248,17 +257,48 @@ public class SimpleP2PChat {
 
     public void disconnectFromPeer() {
         if (partnerConnected) {
-            sendMessage("*** " + userName + " покинул чат ***");
-            partnerAddress = null;
-            partnerPort = 0;
-            partnerName = null;
-            partnerConnected = false;
-            System.out.println("✓ Отключен от собеседника");
+            System.out.println("Отключаемся от собеседника...");
+
+            // Отправляем сообщение о завершении только если это инициировано нами
+            // Проверяем, не пришло ли уже END сообщение
+            String endMsg = "END|" + userName;
+            sendMessage(endMsg);
+
+            // Даем время на отправку
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+
+            // Очищаем данные
+            clearPartnerConnection();
 
             if (statusCallback != null) {
                 statusCallback.onStatusChanged(false, null);
             }
+
+            System.out.println("✓ Отключен от собеседника");
         }
+    }
+
+    private void clearPartnerConnection() {
+        partnerAddress = null;
+        partnerPort = 0;
+        partnerName = null;
+        partnerConnected = false;
+
+        // Закрываем файловые потоки
+        if (fileOutputStream != null) {
+            try {
+                fileOutputStream.close();
+            } catch (IOException ignored) {}
+            fileOutputStream = null;
+        }
+
+        receivingFileName = null;
+        receivingFileSize = 0;
+        receivedBytesCount = 0;
     }
 
     public boolean isConnected() {
@@ -277,7 +317,7 @@ public class SimpleP2PChat {
             try {
                 // Шифруем сообщение
                 String encrypted = SimpleCryptoXOR.encrypt(message);
-                byte[] data = encrypted.getBytes("UTF-8");
+                byte[] data = encrypted.getBytes(StandardCharsets.UTF_8);
 
                 DatagramPacket packet = new DatagramPacket(
                         data, data.length, partnerAddress, partnerPort
@@ -422,7 +462,7 @@ public class SimpleP2PChat {
                     fileOutputStream.write(chunk);
                     receivedBytesCount += chunk.length;
 
-                    int progress = (int)((receivedBytesCount * 100) / receivingFileSize);
+                    int progress = (int) ((receivedBytesCount * 100) / receivingFileSize);
                     System.out.print("\r📥 Прогресс: " + progress + "%");
 
                     if (fileProgressCallback != null) {
@@ -462,14 +502,14 @@ public class SimpleP2PChat {
     class Receiver implements Runnable {
         @Override
         public void run() {
-            byte[] buffer = new byte[65535]; // Увеличиваем буфер для файлов
+            byte[] buffer = new byte[65535];
 
             while (running) {
                 try {
                     DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
                     socket.receive(packet);
 
-                    String received = new String(packet.getData(), 0, packet.getLength(), "UTF-8");
+                    String received = new String(packet.getData(), 0, packet.getLength(), StandardCharsets.UTF_8);
 
                     // Дешифруем сообщение
                     String message = received;
@@ -482,7 +522,7 @@ public class SimpleP2PChat {
                             message.startsWith("FILE_DATA|") ||
                             message.startsWith("FILE_END|")) {
                         handleFileMessage(message);
-                        continue; // Не выводим в чат
+                        continue;
                     }
 
                     // Автоматическое определение собеседника
@@ -502,7 +542,7 @@ public class SimpleP2PChat {
                         }
                     }
 
-                    // Проверяем, не является ли сообщение передачей имени
+
                     if (message.startsWith("NAME|")) {
                         partnerName = message.substring(5);
                         System.out.print("\r\033[K");
@@ -510,6 +550,22 @@ public class SimpleP2PChat {
 
                         if (statusCallback != null) {
                             statusCallback.onStatusChanged(true, partnerName);
+                        }
+                    }
+                    else if (message.startsWith("END|")) {
+                        // Получили END сообщение - отключаемся без отправки ответа
+                        System.out.println("\n*** Собеседник отключился ***");
+
+                        // Очищаем соединение без отправки END
+                        clearPartnerConnection();
+
+                        if (statusCallback != null) {
+                            statusCallback.onStatusChanged(false, null);
+                        }
+
+                        // Уведомляем GUI о разрыве
+                        if (messageCallback != null) {
+                            messageCallback.onMessageReceived("SYSTEM", "Собеседник отключился");
                         }
                     }
                     // Выводим обычное сообщение
@@ -540,7 +596,7 @@ public class SimpleP2PChat {
     }
 
     public void start() {
-        new Thread(new Receiver()).start();
+        startReceiver();
         Scanner scanner = new Scanner(System.in);
 
         System.out.println("Команды:");
@@ -552,7 +608,6 @@ public class SimpleP2PChat {
         System.out.println("------------------------");
 
         while (running) {
-            System.out.print("[" + userName + "]: ");
             String input = scanner.nextLine();
 
             if (input.equalsIgnoreCase("/exit")) {
@@ -601,8 +656,7 @@ public class SimpleP2PChat {
                     default:
                         System.out.println("Неизвестная команда");
                 }
-            }
-            else if (!input.isEmpty()) {
+            } else if (!input.isEmpty()) {
                 if (partnerConnected) {
                     sendMessage(input);
                 } else {
@@ -619,16 +673,14 @@ public class SimpleP2PChat {
         running = false;
         try {
             sendToSignalServer("LOGOUT|" + userName);
-        } catch (Exception e) {
-            // Игнорируем
+        } catch (Exception ignored) {
         }
 
         // Закрываем файл, если остался открытым
         if (fileOutputStream != null) {
             try {
                 fileOutputStream.close();
-            } catch (IOException e) {
-                // Игнорируем
+            } catch (IOException ignored) {
             }
         }
 

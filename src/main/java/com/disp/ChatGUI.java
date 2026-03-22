@@ -275,7 +275,6 @@ public class ChatGUI extends JFrame {
         }
     }
 
-    // ИСПРАВЛЕНО: Используем прямой метод connectToPeer(PeerInfo peer)
     private void connectToPeer() {
         PeerInfo selected = peersList.getSelectedValue();
         if (selected != null && chat != null) {
